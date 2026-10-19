@@ -56,7 +56,7 @@ export function evaluate(rule, snapshot, now=Date.now()) {
     const value=c.field==='date'?new Date(now+8*3600000).toISOString().slice(0,10):snapshot[c.field];
     const missing=value===undefined||value===null||(typeof c.value==='number'&&(typeof value!=='number'||!Number.isFinite(value)))||(typeof c.value==='string'&&typeof value!=='string');
     const match=missing?null:({lt:()=>value<c.value,lte:()=>value<=c.value,gt:()=>value>c.value,gte:()=>value>=c.value,eq:()=>value===c.value,contains:()=>value.includes(c.value)}[c.op])();
-    return {...c,actual:missing?null:value,match,unit:c.field==='changePct'?'%':c.field==='price'?'元/指数点':c.field==='volumeRatio'?'倍':c.field==='heat'?'供应商口径分值':'',source:c.field==='date'?'Asia/Shanghai 系统日历':snapshot.source,asOf:c.field==='date'?new Date(now).toISOString():snapshot.asOf};
+    return {...c,actual:missing?null:value,match,unit:c.field==='changePct'?'%':c.field==='price'?(['000300.SH','000001.SH','399006.SZ'].includes(rule.symbol)?'指数点':'元'):c.field==='volumeRatio'?'倍':c.field==='heat'?'供应商口径分值':'',source:c.field==='date'?'Asia/Shanghai 系统日历':snapshot.source,asOf:c.field==='date'?new Date(now).toISOString():snapshot.asOf};
   });
   if(evidence.some(x=>x.match===null))return {kind:'degraded',reason:'必要字段缺失，无法可靠判断',evidence};
   const match=rule.logic==='all'?evidence.every(x=>x.match):evidence.some(x=>x.match);
@@ -72,5 +72,7 @@ export function transition(task,result,now) {
 }
 export function demoSnapshot(symbol,scenario='normal',now=Date.now()) {
   const changes={normal:-0.82,trigger:-3.12,recovery:0.46,stale:-3.12,conflict:-3.12,missing:-3.12};
-  return {symbol,price:symbol==='600519.SH'?1432.6:3892.4,changePct:changes[scenario]??changes.normal,volumeRatio:scenario==='trigger'?2.4:1.12,heat:scenario==='trigger'?88:43,event:scenario==='trigger'?'演示公告：业绩预告':'演示公告：无新增匹配事件',asOf:new Date(now-(scenario==='stale'?600000:0)).toISOString(),source:'构造数据 · 场景回放（非实时行情）',conflict:scenario==='conflict',...(scenario==='missing'?{changePct:null}:{})};
+  const prevClose=({'000300.SH':4000,'000001.SH':3300,'399006.SZ':2200,'600519.SH':1450,'300750.SZ':250})[symbol]||4000;
+  const changePct=changes[scenario]??changes.normal;
+  return {symbol,prevClose,price:Number((prevClose*(1+changePct/100)).toFixed(2)),changePct,volumeRatio:scenario==='trigger'?2.4:1.12,heat:scenario==='trigger'?88:43,event:scenario==='trigger'?'演示公告：业绩预告':'演示公告：无新增匹配事件',asOf:new Date(now-(scenario==='stale'?600000:0)).toISOString(),source:'构造数据 · 场景回放（非实时行情）',conflict:scenario==='conflict',...(scenario==='missing'?{changePct:null}:{})};
 }

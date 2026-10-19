@@ -76,3 +76,8 @@ Git克隆：git clone https://risk-radar-ybd-20261019.ybd3671.chatgpt.site/repos
 
 
 
+
+GitHub仓库：https://github.com/ybd3671-debug/Sentinel
+
+作业提交入口与体验路线见 docs/SUBMISSION.md。构建源码浏览及Git快照需要系统已安装Git。
+
