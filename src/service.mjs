@@ -1,5 +1,6 @@
 import {ASSETS,parseLocal,validateRule,evaluate,transition,demoSnapshot} from './engine.mjs';
 export function makeService(store,env={}) {
+ const runLocks=new Map();
  const json=(x,status=200)=>Response.json(x,{status,headers:{'Cache-Control':'no-store'}});
  async function parse(text){
    if(!env.AI_API_KEY||!env.AI_MODEL)return parseLocal(text);
@@ -20,13 +21,19 @@ export function makeService(store,env={}) {
    const r=await fetch(url,{headers:env.MARKET_API_KEY?{Authorization:'Bearer '+env.MARKET_API_KEY}:{},signal:AbortSignal.timeout(10000)});
    if(!r.ok)throw Error('行情接口返回异常 HTTP '+r.status);return r.json();
  }
- async function run(task,scenario='normal',manual=true){
+ async function executeRun(task,scenario='normal',manual=true){
    const now=Date.now();if(task.status==='paused')throw Error('任务已暂停，请先恢复');
    let snap,result;try{snap=await snapshot(task,scenario,now);result=transition(task,evaluate(task.rule,snap,now),now);}catch(e){result={kind:'degraded',status:'degraded',alert:false,reason:e.message.includes('演示')?e.message:'数据接口不可用，保留规则并等待重试',evidence:[]};}
    const log={id:crypto.randomUUID(),taskId:task.id,title:task.title,version:task.version,at:now,mode:task.mode,manual,...result,snapshot:snap||null};
    task.status=result.status;task.lastRunAt=now;task.nextRunAt=now+task.rule.intervalMinutes*60000;task.reason=result.reason;
    if(result.latched!==undefined)task.latched=result.latched;if(result.alert)task.lastAlertAt=now;
    await store.putTask(task);await store.addLog(log);return log;
+ }
+ async function run(task,scenario='normal',manual=true){
+   const prior=runLocks.get(task.id)||Promise.resolve();
+   const pending=prior.catch(()=>{}).then(async()=>{const latest=(await store.tasks()).find(t=>t.id===task.id);if(!latest)throw Error('任务不存在');return executeRun(latest,scenario,manual);});
+   runLocks.set(task.id,pending);
+   try{return await pending;}finally{if(runLocks.get(task.id)===pending)runLocks.delete(task.id);}
  }
  let busy=false;
  async function tick(){if(busy)return {skipped:true};busy=true;try{const tasks=await store.tasks();const results=[];for(const task of tasks){if(task.status!=='paused'&&task.nextRunAt<=Date.now())results.push(await run(task,'normal',false));}return {checked:results.length};}finally{busy=false;}}
@@ -48,6 +55,7 @@ export function makeService(store,env={}) {
    }
    const match=path.match(/^\/api\/tasks\/([\w-]+)(?:\/(run|pause|resume))?$/);
    if(match){const task=(await store.tasks()).find(t=>t.id===match[1]);if(!task)return json({error:'任务不存在'},404);
+    if(method!=='GET'&&match[2]!=='run'&&runLocks.has(task.id))throw Error('任务正在检查，请完成后重试修改');
     if(method==='POST'&&match[2]==='run'){const b=await request.json();if(!['normal','trigger','recovery','stale','conflict','missing','failure'].includes(b.scenario||'normal'))throw Error('未知场景');return json(await run(task,b.scenario));}
     if(method==='POST'&&['pause','resume'].includes(match[2])){task.status=match[2]==='pause'?'paused':'running';task.nextRunAt=Date.now();task.reason=match[2]==='pause'?'用户暂停':'用户恢复，等待检查';await store.putTask(task);return json(task);}
     if(method==='PUT'&&!match[2]){const b=await request.json();validateRule(b.rule);task.version++;task.rule=b.rule;task.versions.push({version:task.version,at:Date.now(),rule:b.rule});task.latched=false;task.lastAlertAt=null;task.nextRunAt=Date.now();task.reason='规则更新，等待按新版本检查';await store.putTask(task);return json(task);}
