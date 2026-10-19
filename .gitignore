@@ -1,0 +1,9 @@
+dist/
+site.tar.gz
+
+.env
+.env.*
+!.env.example
+data/
+node_modules/
+*.sqlite*
