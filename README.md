@@ -16,7 +16,7 @@ node server.mjs
 
 ## 体验路径
 
-1. 新建监控，输入“沪深300当日跌幅超过2%，每5分钟检查，冷却60分钟”。
+1. 新建监控，输入“沪深300当日跌幅超过2%，每小时检查，冷却60分钟”。
 2. 生成规则草稿；检查标的、负数阈值、AND/OR、检查间隔和冷却。
 3. 确认规则，选择演示模式，创建任务。
 4. “立即检查”得到未满足条件的结果，展开字段证据和原始快照。
@@ -47,14 +47,14 @@ node scripts/build.mjs
 node scripts/validate-artifact.mjs
 ```
 
-前端源码：`public/`；确定性规则引擎：`src/engine.mjs`；接口/调度：`src/service.mjs`；SQLite/D1存储适配：`src/store.mjs`。构建会把界面与服务模块嵌入 Worker ESM，输出 `dist/server/index.js`。本机版本自动调度；Worker导出scheduled handler，并通过托管云任务每5分钟唤醒受保护接口；实际心跳超过15分钟未更新会提示异常。外部调度可 POST `/api/tick` 并带 `Authorization: Bearer <SCHEDULER_TOKEN>`；未配置或认证失败返回401。
+前端源码：`public/`；确定性规则引擎：`src/engine.mjs`；接口/调度：`src/service.mjs`；SQLite/D1存储适配：`src/store.mjs`。构建会把界面与服务模块嵌入 Worker ESM，输出 `dist/server/index.js`。本机版本自动调度；Worker导出scheduled handler，并通过托管云任务每小时唤醒受保护接口；实际心跳超过2小时未更新会提示异常。外部调度可 POST `/api/tick` 并带 `Authorization: Bearer <SCHEDULER_TOKEN>`；未配置或认证失败返回401。
 
 ## 安全与未做事项
 
 - 密钥只在服务端环境变量，`.env`、数据库和部署包不进入源仓库。
 - 公开演示采用匿名浏览器工作区，随机256位HttpOnly Cookie隔离任务与记录。不同访客无法读取或修改彼此任务；不收集真实身份。Cookie保留30天，清除后无法找回原工作区。未实现账号登录及跨设备恢复。
 - 没有短信/邮件/微信；提醒保存在产品提醒中心。
-- 云端调度使用托管云任务每5分钟唤醒，实际执行状态以页面心跳为准。真实行情和真实大模型未接入。演示模式是可操作的规则系统，不能代替真实集成验收。
+- 云端调度使用托管云任务每小时唤醒，实际执行状态以页面心跳为准。真实行情和真实大模型未接入。演示模式是可操作的规则系统，不能代替真实集成验收。
 - 支持五个内置标的，不提供任意股票搜索。热度、量比需供应商定义；事件是关键词匹配。无交易日过滤、回测、资金流或交易执行。
 - 全站最近500次运行日志保留，各工作区仅能看到自身记录；版本历史附于任务。大型长期审计需独立归档。
 - 运行状态和日志使用SQLite事务或D1批次一起提交，并通过原始任务内容进行乐观并发校验；同一进程内的检查按任务串行执行。发生跨实例竞争时保留已提交结果并返回重试提示。
@@ -73,4 +73,6 @@ Git克隆：git clone https://risk-radar-ybd-20261019.ybd3671.chatgpt.site/repos
 源码ZIP：同站 /source.zip。仓库为标准只读Git HTTP仓库，不依赖GitHub账号；源文件包含README、AI记录、测试和构建脚本。生成的Worker由node scripts/build.mjs重新生成。视频按用户要求暂缓。
 
 调度方式与时延边界见docs/SCHEDULING.md。
+
+
 
