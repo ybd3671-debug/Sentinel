@@ -42,22 +42,35 @@ node server.mjs
 ## 检查和打包
 
 ```sh
-node --test tests/engine.test.mjs tests/service.test.mjs
+node --test tests/engine.test.mjs tests/service.test.mjs tests/public.test.mjs
 node scripts/build.mjs
 node scripts/validate-artifact.mjs
 ```
 
-前端源码：`public/`；确定性规则引擎：`src/engine.mjs`；接口/调度：`src/service.mjs`；SQLite/D1存储适配：`src/store.mjs`。构建会把界面与服务模块嵌入 Worker ESM，输出 `dist/server/index.js`。本机版本自动调度；Worker 导出 scheduled handler，但托管平台是否配置定时触发需另外验证。云端页面不宣称已开启后台调度。外部调度可 POST `/api/tick` 并带 `Authorization: Bearer <SCHEDULER_TOKEN>`；未配置或认证失败返回401。
+前端源码：`public/`；确定性规则引擎：`src/engine.mjs`；接口/调度：`src/service.mjs`；SQLite/D1存储适配：`src/store.mjs`。构建会把界面与服务模块嵌入 Worker ESM，输出 `dist/server/index.js`。本机版本自动调度；Worker导出scheduled handler，并通过托管云任务每5分钟唤醒受保护接口；实际心跳超过15分钟未更新会提示异常。外部调度可 POST `/api/tick` 并带 `Authorization: Bearer <SCHEDULER_TOKEN>`；未配置或认证失败返回401。
 
 ## 安全与未做事项
 
 - 密钥只在服务端环境变量，`.env`、数据库和部署包不进入源仓库。
-- 当前是单用户工作台。默认私有发布；公开给评审前须配置访问权限或增加认证，不宣称支持多租户隔离。
+- 公开演示采用匿名浏览器工作区，随机256位HttpOnly Cookie隔离任务与记录。不同访客无法读取或修改彼此任务；不收集真实身份。Cookie保留30天，清除后无法找回原工作区。未实现账号登录及跨设备恢复。
 - 没有短信/邮件/微信；提醒保存在产品提醒中心。
-- 云端无人值守调度、真实行情和真实大模型尚未验证。演示模式是可操作的规则系统，不能代替真实集成验收。
+- 云端调度使用托管云任务每5分钟唤醒，实际执行状态以页面心跳为准。真实行情和真实大模型未接入。演示模式是可操作的规则系统，不能代替真实集成验收。
 - 支持五个内置标的，不提供任意股票搜索。热度、量比需供应商定义；事件是关键词匹配。无交易日过滤、回测、资金流或交易执行。
-- 最近500次运行日志保留；版本历史附于任务。大型长期审计需独立归档。
-- 当前运行状态和日志分两次写入，进程中断极端情况下可能不一致；生产级事务和跨Worker并发锁尚需增强。
+- 全站最近500次运行日志保留，各工作区仅能看到自身记录；版本历史附于任务。大型长期审计需独立归档。
+- 运行状态和日志使用SQLite事务或D1批次一起提交，并通过原始任务内容进行乐观并发校验；同一进程内的检查按任务串行执行。发生跨实例竞争时保留已提交结果并返回重试提示。
 - 不输出确定性涨跌预测、收益承诺、直接买卖或仓位建议。
 
 详见 `docs/TEST_REPORT.md`、`docs/AI_USAGE.md`、`docs/DEMO_SCRIPT.md`。
+
+## 公开交付入口
+
+产品：https://risk-radar-ybd-20261019.ybd3671.chatgpt.site
+
+公开源码浏览：https://risk-radar-ybd-20261019.ybd3671.chatgpt.site/source
+
+Git克隆：git clone https://risk-radar-ybd-20261019.ybd3671.chatgpt.site/repository/sentinel.git
+
+源码ZIP：同站 /source.zip。仓库为标准只读Git HTTP仓库，不依赖GitHub账号；源文件包含README、AI记录、测试和构建脚本。生成的Worker由node scripts/build.mjs重新生成。视频按用户要求暂缓。
+
+调度方式与时延边界见docs/SCHEDULING.md。
+

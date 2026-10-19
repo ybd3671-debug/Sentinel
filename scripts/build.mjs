@@ -1,14 +1,18 @@
 import {readFile,mkdir,writeFile} from 'node:fs/promises';
+import {buildReview} from './build-review.mjs';
+const review=await buildReview();
+const reviewModule=await readFile('src/review.mjs','utf8');
 const engine=await readFile('src/engine.mjs','utf8');
 const service=(await readFile('src/service.mjs','utf8')).replace(/^import .*?;\r?\n/,'');
 const store=await readFile('src/store.mjs','utf8');
 const html=await readFile('public/index.html','utf8');
 const js=await readFile('public/app.js','utf8');
-const worker=engine+'\n'+store+'\n'+service+'\n'+`const HTML=${JSON.stringify(html)},JS=${JSON.stringify(js)};
+const worker=engine+'\n'+store+'\n'+service+'\n'+reviewModule+'\n'+`const REVIEW=${JSON.stringify(review)};const HTML=${JSON.stringify(html)},JS=${JSON.stringify(js)};
 let cachedDB,cachedService;
 function service(env){if(!env.DB)throw Error('D1 binding DB not configured');if(cachedDB!==env.DB){cachedDB=env.DB;cachedService=makeService(createStore(env.DB,'d1'),env);}return cachedService;}
-export default {async fetch(request,env){const u=new URL(request.url);try{if(u.pathname.startsWith('/api/')){if(request.method!=='GET'&&request.headers.get('origin')&&request.headers.get('origin')!==u.origin)return Response.json({error:'Origin rejected'},{status:403});return await service(env).handle(request);}if(!['/','/app.js'].includes(u.pathname))return new Response('Not found',{status:404});return new Response(u.pathname==='/app.js'?JS:HTML,{headers:{'Content-Type':u.pathname==='/app.js'?'text/javascript; charset=utf-8':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','Cache-Control':'no-cache'}});}catch{return Response.json({error:'服务端存储不可用，请检查 D1 绑定'},{status:503});}},async scheduled(event,env,ctx){ctx.waitUntil(service(env).tick());}};
+export default {async fetch(request,env){const u=new URL(request.url);try{if(request.method!=='GET'&&request.headers.get('origin')&&request.headers.get('origin')!==u.origin)return Response.json({error:'Origin rejected'},{status:403});if(request.method!=='GET'&&Number(request.headers.get('content-length')||0)>20000)return new Response('Payload too large',{status:413});if(u.pathname.startsWith('/api/'))return await service(env).handle(request);if(request.method!=='GET'&&request.method!=='HEAD')return new Response('Method not allowed',{status:405});const source=sourceRoute(u,REVIEW);if(source)return source;if(!['/','/app.js'].includes(u.pathname))return new Response('Not found',{status:404});return new Response(u.pathname==='/app.js'?JS:HTML,{headers:{'Content-Type':u.pathname==='/app.js'?'text/javascript; charset=utf-8':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','Cache-Control':'no-cache'}});}catch{return Response.json({error:'服务端暂时不可用，请重试'},{status:503});}},async scheduled(event,env,ctx){ctx.waitUntil(service(env).tick());}};
 `;
 await mkdir('dist/server',{recursive:true});await mkdir('dist/.openai',{recursive:true});
 await writeFile('worker/index.js',worker);await writeFile('dist/server/index.js',worker);await writeFile('dist/.openai/hosting.json',await readFile('.openai/hosting.json'));
 console.log('Built Worker ESM with embedded UI.');
+await writeFile('src/review-generated.mjs','export default '+JSON.stringify(review)+';');

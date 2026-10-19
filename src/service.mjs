@@ -1,7 +1,7 @@
 import {ASSETS,parseLocal,validateRule,evaluate,transition,demoSnapshot} from './engine.mjs';
 export function makeService(store,env={}) {
  const runLocks=new Map();
- const json=(x,status=200)=>Response.json(x,{status,headers:{'Cache-Control':'no-store'}});
+ const json=(x,status=200)=>Response.json(JSON.parse(JSON.stringify(x,(key,value)=>key==='owner'?undefined:value)),{status,headers:{'Cache-Control':'no-store'}});
  async function parse(text){
    if(!env.AI_API_KEY||!env.AI_MODEL)return parseLocal(text);
    if(typeof text!=='string'||text.length>1500)throw Error('输入过长');
@@ -22,12 +22,15 @@ export function makeService(store,env={}) {
    if(!r.ok)throw Error('行情接口返回异常 HTTP '+r.status);return r.json();
  }
  async function executeRun(task,scenario='normal',manual=true){
+   const expected=JSON.stringify(task);
    const now=Date.now();if(task.status==='paused')throw Error('任务已暂停，请先恢复');
    let snap,result;try{snap=await snapshot(task,scenario,now);result=transition(task,evaluate(task.rule,snap,now),now);}catch(e){result={kind:'degraded',status:'degraded',alert:false,reason:e.message.includes('演示')?e.message:'数据接口不可用，保留规则并等待重试',evidence:[]};}
    const log={id:crypto.randomUUID(),taskId:task.id,title:task.title,version:task.version,at:now,mode:task.mode,manual,...result,snapshot:snap||null};
    task.status=result.status;task.lastRunAt=now;task.nextRunAt=now+task.rule.intervalMinutes*60000;task.reason=result.reason;
    if(result.latched!==undefined)task.latched=result.latched;if(result.alert)task.lastAlertAt=now;
-   await store.putTask(task);await store.addLog(log);return log;
+   task.runId=log.id;
+   if(store.commitRun){if(!await store.commitRun(task,log,expected))throw Error('任务状态已变化，请重试检查');}
+   else {await store.putTask(task);await store.addLog(log);}return log;
  }
  async function run(task,scenario='normal',manual=true){
    const prior=runLocks.get(task.id)||Promise.resolve();
@@ -36,25 +39,25 @@ export function makeService(store,env={}) {
    try{return await pending;}finally{if(runLocks.get(task.id)===pending)runLocks.delete(task.id);}
  }
  let busy=false;
- async function tick(){if(busy)return {skipped:true};busy=true;try{const tasks=await store.tasks();const results=[];for(const task of tasks){if(task.status!=='paused'&&task.nextRunAt<=Date.now())results.push(await run(task,'normal',false));}return {checked:results.length};}finally{busy=false;}}
- return {tick,async handle(request){
+ async function tick(){if(busy)return {skipped:true};busy=true;try{const tasks=await store.tasks();const results=[];for(const task of tasks){if(task.status!=='paused'&&task.nextRunAt<=Date.now())try{results.push(await run(task,'normal',false));}catch{/* A conflicting run must not stop other tasks. */}}const result={at:Date.now(),checked:results.length};if(store.setMeta)await store.setMeta('scheduler',result);return result;}finally{busy=false;}}
+ async function handle(request,owner){
   const url=new URL(request.url),path=url.pathname,method=request.method;
-  if(path==='/api/health')return json({ok:true,modelConfigured:!!(env.AI_API_KEY&&env.AI_MODEL),marketConfigured:!!env.MARKET_API_URL,scheduler:env.LOCAL_SCHEDULER?'服务进程每30秒检查到期任务':'云端自动调度尚未配置；可手动检查，或部署外部定时器调用受保护的 /api/tick',storage:env.LOCAL_SCHEDULER?'SQLite 服务端持久化':'D1 服务端持久化'});
+  if(path==='/api/health'){const pulse=store.getMeta?await store.getMeta('scheduler'):null;return json({ok:true,modelConfigured:!!(env.AI_API_KEY&&env.AI_MODEL),marketConfigured:!!env.MARKET_API_URL,scheduler:env.LOCAL_SCHEDULER?'服务进程每30秒检查到期任务':pulse?(Date.now()-pulse.at<15*60000?'云端调度最近已执行；计划每5分钟唤醒，可能受任务启动延迟影响':'云端调度超过15分钟未更新，请检查调度服务'):'云端调度尚无执行记录，可手动检查',schedulerLastTick:pulse?.at||null,storage:env.LOCAL_SCHEDULER?'SQLite 服务端持久化':'D1 服务端持久化',session:'匿名浏览器独立工作区；Cookie保留30天，清除Cookie后无法找回原工作区'});}
   try{
    if(path==='/api/tick'){
     if(method!=='POST')return json({error:'method'},405);
     if(!env.SCHEDULER_TOKEN||request.headers.get('Authorization')!=='Bearer '+env.SCHEDULER_TOKEN)return json({error:'未授权'},401);
     return json(await tick());
    }
-   if(path==='/api/state'&&method==='GET')return json({tasks:await store.tasks(),logs:await store.logs()});
+   if(path==='/api/state'&&method==='GET'){const tasks=(await store.tasks()).filter(t=>t.owner===owner);const ids=new Set(tasks.map(t=>t.id));return json({tasks,logs:(await store.logs()).filter(l=>ids.has(l.taskId))});}
    if(path==='/api/parse'&&method==='POST'){const b=await request.json();return json(await parse(b.text));}
    if(path==='/api/tasks'&&method==='POST'){
     const b=await request.json();validateRule(b.rule);if(!['demo','live'].includes(b.mode))throw Error('数据模式无效');if(b.mode==='live'&&!env.MARKET_API_URL)throw Error('请先配置服务端真实行情接口');
-    const tasks=await store.tasks();if(tasks.length>=50)throw Error('最多支持50个监控任务');
-    const now=Date.now();const task={id:crypto.randomUUID(),title:String(b.title||b.rule.name+' 条件监控').slice(0,100),rule:b.rule,mode:b.mode,status:'running',version:1,createdAt:now,nextRunAt:now,lastRunAt:null,lastAlertAt:null,latched:false,reason:'等待首次检查',versions:[{version:1,at:now,rule:b.rule}]};await store.putTask(task);return json(task,201);
+    const tasks=(await store.tasks()).filter(t=>t.owner===owner);if(tasks.length>=20)throw Error('每个工作区最多支持20个监控任务');
+    const now=Date.now();const task={id:crypto.randomUUID(),owner,title:String(b.title||b.rule.name+' 条件监控').slice(0,100),rule:b.rule,mode:b.mode,status:'running',version:1,createdAt:now,nextRunAt:now,lastRunAt:null,lastAlertAt:null,latched:false,reason:'等待首次检查',versions:[{version:1,at:now,rule:b.rule}]};await store.putTask(task);return json(task,201);
    }
    const match=path.match(/^\/api\/tasks\/([\w-]+)(?:\/(run|pause|resume))?$/);
-   if(match){const task=(await store.tasks()).find(t=>t.id===match[1]);if(!task)return json({error:'任务不存在'},404);
+   if(match){const task=(await store.tasks()).find(t=>t.id===match[1]&&t.owner===owner);if(!task)return json({error:'任务不存在'},404);
     if(method!=='GET'&&match[2]!=='run'&&runLocks.has(task.id))throw Error('任务正在检查，请完成后重试修改');
     if(method==='POST'&&match[2]==='run'){const b=await request.json();if(!['normal','trigger','recovery','stale','conflict','missing','failure'].includes(b.scenario||'normal'))throw Error('未知场景');return json(await run(task,b.scenario));}
     if(method==='POST'&&['pause','resume'].includes(match[2])){task.status=match[2]==='pause'?'paused':'running';task.nextRunAt=Date.now();task.reason=match[2]==='pause'?'用户暂停':'用户恢复，等待检查';await store.putTask(task);return json(task);}
@@ -62,5 +65,12 @@ export function makeService(store,env={}) {
    }
    return json({error:'接口不存在'},404);
   }catch(e){return json({error:e instanceof SyntaxError?'请求格式无效':e.message||'操作失败'},400);}
+ }
+ return {tick,async handle(request){
+  const current=request.headers.get('cookie')?.match(/(?:^|;\s*)sentinel_workspace=([a-f0-9]{64})(?:;|$)/)?.[1];
+  const owner=current||Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');
+  const response=await handle(request,owner);
+  if(!current)response.headers.append('Set-Cookie','sentinel_workspace='+owner+'; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000'+(new URL(request.url).protocol==='https:'?'; Secure':''));
+  return response;
  }};
 }

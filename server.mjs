@@ -4,6 +4,8 @@ import {readFile,mkdir} from 'node:fs/promises';
 import {DatabaseSync} from 'node:sqlite';
 import {createStore} from './src/store.mjs';
 import {makeService} from './src/service.mjs';
+import {sourceRoute} from './src/review.mjs';
+const review=(await import('./src/review-generated.mjs').catch(()=>({default:null}))).default;
 await mkdir(new URL('./data/',import.meta.url),{recursive:true});
 const db=new DatabaseSync(fileURLToPath(new URL('./data/sentinel.sqlite',import.meta.url)));
 const env={...process.env,LOCAL_SCHEDULER:'1'};
@@ -17,6 +19,7 @@ const server=http.createServer(async(req,res)=>{
  let size=0;const chunks=[];for await(const part of req){size+=part.length;if(size>20000){res.writeHead(413);res.end('Payload too large');return;}chunks.push(part);}
  if(url.pathname.startsWith('/api/')){const response=await service.handle(new Request(url,{method:req.method,headers:req.headers,body:['GET','HEAD'].includes(req.method)?undefined:Buffer.concat(chunks)}));res.writeHead(response.status,Object.fromEntries(response.headers));res.end(await response.text());return;}
  if(req.method!=='GET'){res.writeHead(405);res.end();return;}
+ if(review){const source=sourceRoute(url,review);if(source){res.writeHead(source.status,Object.fromEntries(source.headers));res.end(Buffer.from(await source.arrayBuffer()));return;}}
  if(!['/','/app.js'].includes(url.pathname)){res.writeHead(404);res.end('Not found');return;}
  res.writeHead(200,{'Content-Type':url.pathname==='/app.js'?'text/javascript; charset=utf-8':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','Cache-Control':'no-cache'});res.end(url.pathname==='/app.js'?js:html);
  }catch{res.writeHead(500);res.end('Service unavailable');}

@@ -26,15 +26,17 @@ export function validateRule(r) {
 export function parseLocal(text) {
   if(typeof text!=='string'||text.length>1500||!text.trim()) throw Error('请输入1500字以内的关注点');
   if(/买入|卖出|买卖|仓位|保证收益|稳赚|预测.*涨|自动交易/.test(text)) throw Error('本产品仅提供条件监控，请改写为可检查的价格、事件或日期条件，不执行交易或收益预测');
+  if(/连续|交易日|收盘|开盘|除非|不提醒|微信|短信|邮件|波动率|市盈率|市值|回撤|止盈|止损/.test(text))throw Error('这段文字包含当前解析器尚不支持的时间、指标或通知限制，请简化关注点，或在规则编辑器中配置受支持条件');
   const names=Object.keys(ASSETS).filter(x=>text.includes(x));
   if(names.length!==1) throw Error('请明确一个标的：沪深300、上证指数、创业板指、贵州茅台或宁德时代');
   const conditions=[];
-  const pct=text.match(/(跌幅|下跌|涨幅|上涨|涨跌幅)[^\d\-]{0,10}(-?\d+(?:\.\d+)?)\s*[%％]/);
-  if(pct){const neg=/跌幅|下跌/.test(pct[1]);conditions.push({field:'changePct',op:neg?'lte':'gte',value:neg?-Math.abs(+pct[2]):+pct[2]});}
-  const price=text.match(/(?:股价|价格|最新价)[^\d]{0,5}(低于|跌破|小于|高于|超过|大于|不高于|不低于)\s*(\d+(?:\.\d+)?)/);
-  if(price) conditions.push({field:'price',op:/低于|跌破|小于|不高于/.test(price[1])?'lte':'gte',value:+price[2]});
-  const vr=text.match(/量比[^\d]{0,6}(\d+(?:\.\d+)?)/);if(vr)conditions.push({field:'volumeRatio',op:'gte',value:+vr[1]});
-  const heat=text.match(/热度[^\d]{0,6}(\d+(?:\.\d+)?)/);if(heat)conditions.push({field:'heat',op:'gte',value:+heat[1]});
+  const comparison=words=>/不低于|至少|达到/.test(words)?'gte':/不高于|不超过|至多/.test(words)?'lte':/低于|小于|跌破/.test(words)?'lt':/高于|大于|超过|突破/.test(words)?'gt':'eq';
+  const pct=text.match(/(跌幅|下跌|涨幅|上涨|涨跌幅)([^\d\-]{0,10})(-?\d+(?:\.\d+)?)\s*[%％]/);
+  if(pct){const neg=/跌幅|下跌/.test(pct[1]);const op=comparison(pct[2]);conditions.push({field:'changePct',op:neg?({gt:'lt',gte:'lte',lt:'gt',lte:'gte',eq:'eq'}[op]):op,value:neg?-Math.abs(+pct[3]):+pct[3]});}
+  const price=text.match(/(?:股价|价格|最新价)\s*(不高于|不低于|低于|跌破|小于|高于|超过|大于)\s*(\d+(?:\.\d+)?)/);
+  if(price) conditions.push({field:'price',op:comparison(price[1]),value:+price[2]});
+  const vr=text.match(/量比([^\d]{0,6})(\d+(?:\.\d+)?)/);if(vr)conditions.push({field:'volumeRatio',op:comparison(vr[1]),value:+vr[2]});
+  const heat=text.match(/热度([^\d]{0,6})(\d+(?:\.\d+)?)/);if(heat)conditions.push({field:'heat',op:comparison(heat[1]),value:+heat[2]});
   const date=text.match(/\d{4}-\d{2}-\d{2}/);if(date)conditions.push({field:'date',op:'eq',value:date[0]});
   const event=text.match(/(?:公告|事件|新闻)(?:包含|出现|含有)[“「"']?([^，。；“”」"']{1,30})/);if(event)conditions.push({field:'event',op:'contains',value:event[1].trim()});
   if(!conditions.length)throw Error('未识别出明确阈值。示例：沪深300当日跌幅超过2%，冷却60分钟');
@@ -46,6 +48,7 @@ export function parseLocal(text) {
 export function evaluate(rule, snapshot, now=Date.now()) {
   validateRule(rule);
   if(!snapshot||snapshot.symbol!==rule.symbol) return {kind:'degraded',reason:'标的不匹配或数据缺失',evidence:[]};
+  if(typeof snapshot.source!=='string'||!snapshot.source.trim())return {kind:'degraded',reason:'数据来源缺失，无法追溯，暂停条件判断',evidence:[]};
   const age=now-Date.parse(snapshot.asOf);
   if(!Number.isFinite(age)||age>180000||age < -60000) return {kind:'degraded',reason:'数据过期、时间缺失或来自未来，暂停条件判断',evidence:[]};
   if(snapshot.conflict) return {kind:'degraded',reason:'来源数据冲突，等待核验，不生成正常结论',evidence:[]};

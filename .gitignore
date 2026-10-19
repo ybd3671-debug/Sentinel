@@ -7,3 +7,5 @@ site.tar.gz
 data/
 node_modules/
 *.sqlite*
+.sites-runtime/
+src/review-generated.mjs
