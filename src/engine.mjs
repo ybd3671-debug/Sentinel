@@ -43,11 +43,13 @@ export function parseLocal(text,now=Date.now()) {
 export function evaluate(rule, snapshot, now=Date.now()) {
   validateRule(rule);
   if(rule.conditions.every(c=>c.field==='date'))snapshot={symbol:rule.symbol,source:'Asia/Shanghai 系统日历',asOf:new Date(now).toISOString()};
-  if(!snapshot||snapshot.symbol!==rule.symbol) return {kind:'degraded',reason:'标的不匹配或数据缺失',evidence:[]};
-  if(typeof snapshot.source!=='string'||!snapshot.source.trim())return {kind:'degraded',reason:'数据来源缺失，无法追溯，暂停条件判断',evidence:[]};
+  const unit=c=>c.field==='changePct'?'%':c.field==='price'?(['000300.SH','000001.SH','399006.SZ'].includes(rule.symbol)?'指数点':'元'):c.field==='volumeRatio'?'倍':c.field==='heat'?'供应商口径分值':'';
+  const unavailable=reason=>({kind:'degraded',reason,evidence:rule.conditions.map(c=>({...c,actual:snapshot?.symbol===rule.symbol?(snapshot[c.field]??null):null,match:null,unit:unit(c),source:snapshot?.source||'来源缺失',asOf:snapshot?.asOf||null,unavailableReason:reason}))});
+  if(!snapshot||snapshot.symbol!==rule.symbol) return unavailable('标的不匹配或数据缺失');
+  if(typeof snapshot.source!=='string'||!snapshot.source.trim())return unavailable('数据来源缺失，无法追溯，暂停条件判断');
   const age=now-Date.parse(snapshot.asOf);
-  if(!Number.isFinite(age)||age>180000||age < -60000) return {kind:'degraded',reason:age>180000?'报价时点已超过3分钟（可能休市或来源延迟），暂停价格判断；不会用取回时间替代报价时间':'报价时间缺失或来自未来，暂停条件判断',evidence:[]};
-  if(snapshot.conflict) return {kind:'degraded',reason:'来源数据冲突，等待核验，不生成正常结论',evidence:[]};
+  if(!Number.isFinite(age)||age>180000||age < -60000) return unavailable(age>180000?'报价时点已超过3分钟（可能休市或来源延迟），暂停价格判断；不会用取回时间替代报价时间':'报价时间缺失或来自未来，暂停条件判断');
+  if(snapshot.conflict) return unavailable('来源数据冲突，等待核验，不生成正常结论');
   const evidence=rule.conditions.map(c=>{
     const value=c.field==='date'?new Date(now+8*3600000).toISOString().slice(0,10):snapshot[c.field];
     const missing=value===undefined||value===null||(typeof c.value==='number'&&(typeof value!=='number'||!Number.isFinite(value)))||(typeof c.value==='string'&&typeof value!=='string');
