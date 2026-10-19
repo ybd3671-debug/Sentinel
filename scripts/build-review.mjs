@@ -5,7 +5,7 @@ export async function buildReview(){
  const root=process.cwd(),stage=path.join(root,'.sites-runtime','review-'+Date.now());await mkdir(stage,{recursive:true});
  const files={};
  async function collect(dir){for(const e of await readdir(path.join(root,dir),{withFileTypes:true})){const p=dir+'/'+e.name;if(e.name==='review-generated.mjs')continue;if(e.isDirectory())await collect(p);else if(e.isFile())files[p]=await readFile(path.join(root,p),'utf8');}}
- for(const dir of ['src','public','scripts','tests','docs'])await collect(dir);
+ for(const dir of ['src','public','scripts','tests','docs','.github'])await collect(dir);
  for(const p of ['README.md','package.json','server.mjs','.env.example','.gitignore','.openai/hosting.json'])files[p]=await readFile(path.join(root,p),'utf8');
  // Only this explicit allowlist is published; no local Git history, data, env or credentials.
  for(const [p,content] of Object.entries(files)){await mkdir(path.dirname(path.join(stage,p)),{recursive:true});await writeFile(path.join(stage,p),content);}

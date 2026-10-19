@@ -1,3 +1,4 @@
+import {parseIntent,checkIntent} from './intent.mjs';
 export const ASSETS = {'沪深300':'000300.SH','上证指数':'000001.SH','创业板指':'399006.SZ','贵州茅台':'600519.SH','宁德时代':'300750.SZ'};
 export const FIELDS = {changePct:'当日涨跌幅',price:'最新价',volumeRatio:'量比',date:'日期',event:'事件',heat:'热度'};
 export const OPS = {lt:'低于',lte:'不高于',gt:'高于',gte:'不低于',eq:'等于',contains:'包含'};
@@ -6,7 +7,7 @@ export function validateRule(r) {
   if (!['all','any'].includes(r.logic)) throw Error('组合关系必须为全部或任一');
   if (!Array.isArray(r.conditions)||r.conditions.length<1||r.conditions.length>5) throw Error('条件数必须为1至5');
   for (const c of r.conditions) {
-    if (!(c.field in FIELDS)||!(c.op in OPS)) throw Error('不支持的规则字段或运算符');
+    if (!c||!Object.hasOwn(FIELDS,c.field)||!Object.hasOwn(OPS,c.op)) throw Error('不支持的规则字段或运算符');
     if (['event','date'].includes(c.field)) {
       if(typeof c.value!=='string'||!c.value.trim()||c.value.length>100) throw Error('日期或事件值无效');
       if(c.field==='date'&&(!/^\d{4}-\d{2}-\d{2}$/.test(c.value)||Number.isNaN(Date.parse(c.value+'T00:00:00Z'))||new Date(c.value+'T00:00:00Z').toISOString().slice(0,10)!==c.value)) throw Error('请使用有效日期 YYYY-MM-DD');
@@ -19,38 +20,33 @@ export function validateRule(r) {
       if(c.field!=='changePct'&&c.value<0) throw Error('价格、量比和热度不能为负数');
     }
   }
+  if(r.logic==='all'){
+    for(const field of ['changePct','price','volumeRatio','heat']){
+      let low=-Infinity,high=Infinity,lowClosed=true,highClosed=true;
+      for(const c of r.conditions.filter(x=>x.field===field)){
+        if(['gt','gte','eq'].includes(c.op)){if(c.value>low){low=c.value;lowClosed=c.op!=='gt';}else if(c.value===low)lowClosed=lowClosed&&c.op!=='gt';}
+        if(['lt','lte','eq'].includes(c.op)){if(c.value<high){high=c.value;highClosed=c.op!=='lt';}else if(c.value===high)highClosed=highClosed&&c.op!=='lt';}
+      }
+      if(low>high||low===high&&(!lowClosed||!highClosed))throw Error('同一指标的上下界相互矛盾，无法同时满足，请检查范围');
+    }
+    if(new Set(r.conditions.filter(c=>c.field==='date'&&c.op==='eq').map(c=>c.value)).size>1)throw Error('同一任务不能同时等于两个不同日期，请拆分任务或改用任一满足');
+  }
   if(!Number.isInteger(r.cooldownMinutes)||r.cooldownMinutes<1||r.cooldownMinutes>10080) throw Error('冷却应为1至10080分钟');
   if(!Number.isInteger(r.intervalMinutes)||r.intervalMinutes<1||r.intervalMinutes>1440) throw Error('检查间隔应为1至1440分钟');
   return r;
 }
-export function parseLocal(text) {
-  if(typeof text!=='string'||text.length>1500||!text.trim()) throw Error('请输入1500字以内的关注点');
-  if(/买入|卖出|买卖|仓位|保证收益|稳赚|预测.*涨|自动交易/.test(text)) throw Error('本产品仅提供条件监控，请改写为可检查的价格、事件或日期条件，不执行交易或收益预测');
-  if(/连续|交易日|收盘|开盘|除非|不提醒|微信|短信|邮件|波动率|市盈率|市值|回撤|止盈|止损/.test(text))throw Error('这段文字包含当前解析器尚不支持的时间、指标或通知限制，请简化关注点，或在规则编辑器中配置受支持条件');
-  const names=Object.keys(ASSETS).filter(x=>text.includes(x));
-  if(names.length!==1) throw Error('请明确一个标的：沪深300、上证指数、创业板指、贵州茅台或宁德时代');
-  const conditions=[];
-  const comparison=words=>/不低于|至少|达到/.test(words)?'gte':/不高于|不超过|至多/.test(words)?'lte':/低于|小于|跌破/.test(words)?'lt':/高于|大于|超过|突破/.test(words)?'gt':'eq';
-  const pct=text.match(/(跌幅|下跌|涨幅|上涨|涨跌幅)([^\d\-]{0,10})(-?\d+(?:\.\d+)?)\s*[%％]/);
-  if(pct){const neg=/跌幅|下跌/.test(pct[1]);const op=comparison(pct[2]);conditions.push({field:'changePct',op:neg?({gt:'lt',gte:'lte',lt:'gt',lte:'gte',eq:'eq'}[op]):op,value:neg?-Math.abs(+pct[3]):+pct[3]});}
-  const price=text.match(/(?:股价|价格|最新价)\s*(不高于|不低于|低于|跌破|小于|高于|超过|大于)\s*(\d+(?:\.\d+)?)/);
-  if(price) conditions.push({field:'price',op:comparison(price[1]),value:+price[2]});
-  const vr=text.match(/量比([^\d]{0,6})(\d+(?:\.\d+)?)/);if(vr)conditions.push({field:'volumeRatio',op:comparison(vr[1]),value:+vr[2]});
-  const heat=text.match(/热度([^\d]{0,6})(\d+(?:\.\d+)?)/);if(heat)conditions.push({field:'heat',op:comparison(heat[1]),value:+heat[2]});
-  const date=text.match(/\d{4}-\d{2}-\d{2}/);if(date)conditions.push({field:'date',op:'eq',value:date[0]});
-  const event=text.match(/(?:公告|事件|新闻)(?:包含|出现|含有)[“「"']?([^，。；“”」"']{1,30})/);if(event)conditions.push({field:'event',op:'contains',value:event[1].trim()});
-  if(!conditions.length)throw Error('未识别出明确阈值。示例：沪深300当日跌幅超过2%，冷却60分钟');
-  const cd=text.match(/(?:冷却|不重复提醒|触发后)\s*(\d+)\s*(分钟|小时)/)||text.match(/(\d+)\s*(分钟|小时)内.*不.*重复/);
-  const interval=text.match(/每\s*(\d+)\s*(分钟|小时)/);
-  const rule=validateRule({symbol:ASSETS[names[0]],name:names[0],logic:/或者|或|任一/.test(text)?'any':'all',conditions,cooldownMinutes:cd?+cd[1]*(cd[2]==='小时'?60:1):60,intervalMinutes:interval?+interval[1]*(interval[2]==='小时'?60:1):5});
-  return {rule,parser:'本地规则解析器',warnings:['请核对阈值和组合关系；规则确认后才开始监控。','当前未调用大模型；未识别的自然语言不能视为已执行要求。']};
+export const validateIntent=checkIntent;
+export function parseLocal(text,now=Date.now()) {
+ const parsed=parseIntent(text,ASSETS,now);validateRule(parsed.rule);
+ return {rule:parsed.rule,parser:'本地规则解析器',warnings:[...parsed.warnings,'请核对阈值和组合关系；规则确认后才开始监控。','当前未调用大模型；不能完整理解的要求会拒绝生成草稿。']};
 }
 export function evaluate(rule, snapshot, now=Date.now()) {
   validateRule(rule);
+  if(rule.conditions.every(c=>c.field==='date'))snapshot={symbol:rule.symbol,source:'Asia/Shanghai 系统日历',asOf:new Date(now).toISOString()};
   if(!snapshot||snapshot.symbol!==rule.symbol) return {kind:'degraded',reason:'标的不匹配或数据缺失',evidence:[]};
   if(typeof snapshot.source!=='string'||!snapshot.source.trim())return {kind:'degraded',reason:'数据来源缺失，无法追溯，暂停条件判断',evidence:[]};
   const age=now-Date.parse(snapshot.asOf);
-  if(!Number.isFinite(age)||age>180000||age < -60000) return {kind:'degraded',reason:'数据过期、时间缺失或来自未来，暂停条件判断',evidence:[]};
+  if(!Number.isFinite(age)||age>180000||age < -60000) return {kind:'degraded',reason:age>180000?'报价时点已超过3分钟（可能休市或来源延迟），暂停价格判断；不会用取回时间替代报价时间':'报价时间缺失或来自未来，暂停条件判断',evidence:[]};
   if(snapshot.conflict) return {kind:'degraded',reason:'来源数据冲突，等待核验，不生成正常结论',evidence:[]};
   const evidence=rule.conditions.map(c=>{
     const value=c.field==='date'?new Date(now+8*3600000).toISOString().slice(0,10):snapshot[c.field];
@@ -76,3 +72,4 @@ export function demoSnapshot(symbol,scenario='normal',now=Date.now()) {
   const changePct=changes[scenario]??changes.normal;
   return {symbol,prevClose,price:Number((prevClose*(1+changePct/100)).toFixed(2)),changePct,volumeRatio:scenario==='trigger'?2.4:1.12,heat:scenario==='trigger'?88:43,event:scenario==='trigger'?'演示公告：业绩预告':'演示公告：无新增匹配事件',asOf:new Date(now-(scenario==='stale'?600000:0)).toISOString(),source:'构造数据 · 场景回放（非实时行情）',conflict:scenario==='conflict',...(scenario==='missing'?{changePct:null}:{})};
 }
+

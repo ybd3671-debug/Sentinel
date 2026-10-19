@@ -42,7 +42,7 @@ node server.mjs
 ## 检查和打包
 
 ```sh
-node --test tests/engine.test.mjs tests/service.test.mjs tests/public.test.mjs
+node --test tests/*.test.mjs
 node scripts/build.mjs
 node scripts/validate-artifact.mjs
 ```
@@ -54,7 +54,7 @@ node scripts/validate-artifact.mjs
 - 密钥只在服务端环境变量，`.env`、数据库和部署包不进入源仓库。
 - 公开演示采用匿名浏览器工作区，随机256位HttpOnly Cookie隔离任务与记录。不同访客无法读取或修改彼此任务；不收集真实身份。Cookie保留30天，清除后无法找回原工作区。未实现账号登录及跨设备恢复。
 - 没有短信/邮件/微信；提醒保存在产品提醒中心。
-- 云端调度使用托管云任务每小时唤醒，实际执行状态以页面心跳为准。真实行情和真实大模型未接入。演示模式是可操作的规则系统，不能代替真实集成验收。
+- 云端调度使用托管云任务每小时唤醒，实际执行状态以页面心跳为准。腾讯公开报价已实现；扶摇/iFinD及运行时大模型未接入。演示模式是可操作的规则系统，不能代替真实集成验收。
 - 支持五个内置标的，不提供任意股票搜索。热度、量比需供应商定义；事件是关键词匹配。无交易日过滤、回测、资金流或交易执行。
 - 全站最近500次运行日志保留，各工作区仅能看到自身记录；版本历史附于任务。大型长期审计需独立归档。
 - 运行状态和日志使用SQLite事务或D1批次一起提交，并通过原始任务内容进行乐观并发校验；同一进程内的检查按任务串行执行。发生跨实例竞争时保留已提交结果并返回重试提示。
@@ -80,4 +80,12 @@ Git克隆：git clone https://risk-radar-ybd-20261019.ybd3671.chatgpt.site/repos
 GitHub仓库：https://github.com/ybd3671-debug/Sentinel
 
 作业提交入口与体验路线见 docs/SUBMISSION.md。构建源码浏览及Git快照需要系统已安装Git。
+
+
+
+## 本轮改进
+
+规则澄清、相对日期、区间上下界、模型交叉校验和手动编辑入口见 docs/IMPROVEMENTS.md。腾讯公开报价模式无需密钥，支持真实价格/涨跌幅/日期；其字段、时点、过期策略和服务边界见 docs/PUBLIC_DATA.md。价格、涨跌幅、量比、热度、日期及事件仍共用统一任务模型，公开报价只开放实际可取的字段。
+
+GitHub Actions在推送时运行全部测试并构建，发布后可手动触发online=true运行真实站点验收。工作流只需contents:read，不保存金融或模型密钥。
 

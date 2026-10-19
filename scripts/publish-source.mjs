@@ -1,5 +1,5 @@
 // Portable wrapper for the native Sites workflow; credentials only arrive on stdin.
-import {spawn,spawnSync} from 'node:child_process';import {readFile} from 'node:fs/promises';import path from 'node:path';
+import {spawn,spawnSync} from 'node:child_process';import {readFile,readdir} from 'node:fs/promises';import path from 'node:path';
 const pluginRoot=process.argv[2];if(!pluginRoot)throw Error('Provide the installed Sites plugin root');
 if(process.stdin.isTTY)process.stdin.setRawMode(true);process.stdin.resume();console.log('Ready for source credential JSON on stdin (hidden).');let input='';
 process.stdin.on('data',chunk=>{input+=chunk.toString();if(input.includes('\u0003'))process.exit(130);if(!input.trim().endsWith('}'))return;process.stdin.removeAllListeners('data');process.stdin.pause();if(process.stdin.isTTY)process.stdin.setRawMode(false);const data=JSON.parse(input.trim());input='';publish(data).catch(e=>{console.error(e.message);process.exitCode=1;}).finally(()=>process.stdin.destroy());});
@@ -7,9 +7,10 @@ async function publish({credential}){
  const manifest=JSON.parse(await readFile('.openai/hosting.json','utf8')),root=process.cwd(),archive=path.join(root,'site.tar.gz');
  const env={...process.env,GIT_CONFIG_COUNT:'1',GIT_CONFIG_KEY_0:'safe.directory',GIT_CONFIG_VALUE_0:root};
  const helper=path.join(pluginRoot,'scripts','site-workflow.mjs');
+ const testFiles=(await readdir('tests')).filter(f=>f.endsWith('.test.mjs')).sort().map(f=>'tests/'+f);
  const child=spawn(process.execPath,[helper,'--project-id',manifest.project_id],{env,stdio:['pipe','pipe','pipe']});let output='',errors='';
  child.stdout.on('data',c=>{output+=c.toString();});child.stderr.on('data',c=>{errors+=c.toString();});
- child.stdin.end(JSON.stringify({credential,source:{project_id:manifest.project_id,checkout_path:root},commands:[['node','--test','tests/engine.test.mjs','tests/service.test.mjs','tests/public.test.mjs'],['node','scripts/build.mjs'],['node','scripts/validate-artifact.mjs']],archivePath:archive})+'\n');
+ child.stdin.end(JSON.stringify({credential,source:{project_id:manifest.project_id,checkout_path:root},commands:[['node','--test',...testFiles],['node','scripts/build.mjs'],['node','scripts/validate-artifact.mjs']],archivePath:archive})+'\n');
  const code=await new Promise((resolve,reject)=>{child.on('close',resolve);child.on('error',reject);});
  const git=(args)=>{const r=spawnSync('git',args,{env,encoding:'utf8'});if(r.status!==0)throw Error('Git verification failed');return r.stdout.trim();};
  if(code!==0){if(!errors.includes('package-site.sh')||!errors.includes('No such file'))throw Error(errors.split(credential.token).join('[redacted]')||'Source workflow failed');

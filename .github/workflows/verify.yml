@@ -1,0 +1,33 @@
+name: Sentinel verification
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      online:
+        description: Verify the deployed public site after publication
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Rule, isolation, data and failure tests
+        run: node --test tests/*.test.mjs
+      - name: Build and validate Worker
+        run: |
+          node scripts/build.mjs
+          node scripts/validate-artifact.mjs
+      - name: Verify deployed D1 lifecycle and public quote source
+        if: github.event_name == 'workflow_dispatch' && inputs.online
+        run: node scripts/verify-online.mjs --public --market
